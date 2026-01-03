@@ -1,7 +1,7 @@
 [ 20%] Building CXX object CMakeFiles/cube.dir/src/cube.cpp.obj
 C:\Users\Hayyan\Desktop\C++ Game\sfml-pong\src\cube.cpp: In function 'int main()':
-C:\Users\Hayyan\Desktop\C++ Game\sfml-pong\src\cube.cpp:151:74: warning: ignoring return value of 'bool sf::Texture::loadFromImage(const sf::Image&, bool, const sf::IntRect&)', declared with attribute 'nodiscard' [-Wunused-result]
-  151 |         sf::Image img = makeTopImage(texSize); atlas.topTex.loadFromImage(img);
+C:\Users\Hayyan\Desktop\C++ Game\sfml-pong\src\cube.cpp:173:74: warning: ignoring return value of 'bool sf::Texture::loadFromImage(const sf::Image&, bool, const sf::IntRect&)', declared with attribute 'nodiscard' [-Wunused-result]
+  173 |         sf::Image img = makeTopImage(texSize); atlas.topTex.loadFromImage(img);
       |                                                ~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~
 In file included from D:/Mysys2/mingw64/include/SFML/Graphics/Font.hpp:34,
                  from D:/Mysys2/mingw64/include/SFML/Graphics.hpp:36,
@@ -9,14 +9,14 @@ In file included from D:/Mysys2/mingw64/include/SFML/Graphics/Font.hpp:34,
 D:/Mysys2/mingw64/include/SFML/Graphics/Texture.hpp:380:24: note: declared here
   380 |     [[nodiscard]] bool loadFromImage(const Image& image, bool sRgb = false, const IntRect& area = {});
       |                        ^~~~~~~~~~~~~
-C:\Users\Hayyan\Desktop\C++ Game\sfml-pong\src\cube.cpp:152:66: warning: ignoring return value of 'bool sf::Texture::loadFromImage(const sf::Image&, bool, const sf::IntRect&)', declared with attribute 'nodiscard' [-Wunused-result]
-  152 |         img = makeSideImage(texSize); atlas.sideTex.loadFromImage(img);
+C:\Users\Hayyan\Desktop\C++ Game\sfml-pong\src\cube.cpp:174:66: warning: ignoring return value of 'bool sf::Texture::loadFromImage(const sf::Image&, bool, const sf::IntRect&)', declared with attribute 'nodiscard' [-Wunused-result]
+  174 |         img = makeSideImage(texSize); atlas.sideTex.loadFromImage(img);
       |                                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~
 D:/Mysys2/mingw64/include/SFML/Graphics/Texture.hpp:380:24: note: declared here
   380 |     [[nodiscard]] bool loadFromImage(const Image& image, bool sRgb = false, const IntRect& area = {});
       |                        ^~~~~~~~~~~~~
-C:\Users\Hayyan\Desktop\C++ Game\sfml-pong\src\cube.cpp:153:66: warning: ignoring return value of 'bool sf::Texture::loadFromImage(const sf::Image&, bool, const sf::IntRect&)', declared with attribute 'nodiscard' [-Wunused-result]
-  153 |         img = makeDirtImage(texSize); atlas.dirtTex.loadFromImage(img);
+C:\Users\Hayyan\Desktop\C++ Game\sfml-pong\src\cube.cpp:175:66: warning: ignoring return value of 'bool sf::Texture::loadFromImage(const sf::Image&, bool, const sf::IntRect&)', declared with attribute 'nodiscard' [-Wunused-result]
+  175 |         img = makeDirtImage(texSize); atlas.dirtTex.loadFromImage(img);
       |                                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~
 D:/Mysys2/mingw64/include/SFML/Graphics/Texture.hpp:380:24: note: declared here
   380 |     [[nodiscard]] bool loadFromImage(const Image& image, bool sRgb = false, const IntRect& area = {});

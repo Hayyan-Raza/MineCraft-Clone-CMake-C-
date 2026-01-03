@@ -547,4 +547,8 @@ CMakeFiles/cube.dir/src/cube.cpp.obj: \
  D:/Mysys2/mingw64/include/c++/15.2.0/pstl/glue_algorithm_defs.h \
  C:\Users\Hayyan\Desktop\C++\ Game\sfml-pong\src\texture_atlas.h \
  C:\Users\Hayyan\Desktop\C++\ Game\sfml-pong\src\world.h \
- C:\Users\Hayyan\Desktop\C++\ Game\sfml-pong\src\rendering.h
+ C:\Users\Hayyan\Desktop\C++\ Game\sfml-pong\src\rendering.h \
+ D:/Mysys2/mingw64/include/c++/15.2.0/fstream \
+ D:/Mysys2/mingw64/include/c++/15.2.0/x86_64-w64-mingw32/bits/basic_file.h \
+ D:/Mysys2/mingw64/include/c++/15.2.0/x86_64-w64-mingw32/bits/c++io.h \
+ D:/Mysys2/mingw64/include/c++/15.2.0/bits/fstream.tcc

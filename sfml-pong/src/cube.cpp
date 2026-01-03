@@ -11,6 +11,24 @@
 #include "texture_atlas.h"
 #include "world.h"
 #include "rendering.h"
+#include <fstream>
+
+// Helper to find assets directory
+static std::string findAssetsDirectory() {
+    std::vector<std::string> candidates = {
+        "assets",
+        "sfml-pong/assets",
+        "../assets",
+        "../../assets",
+        "sfml-pong/build_fix/assets",
+        "build_fix/assets"
+    };
+    for (const auto& p : candidates) {
+        std::ifstream f(p + "/atlas.png");
+        if (f.good()) return p;
+    }
+    return "assets"; // Default fallback
+}
 
 static sf::Image makeTopImage(unsigned size){
     sf::Image img(sf::Vector2u{size, size}, sf::Color::Transparent);
@@ -76,21 +94,25 @@ int main() {
     // Basic GL setup
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_TEXTURE_2D);
-    glClearColor(0.1f, 0.1f, 0.12f, 1.0f);
+    glEnable(GL_TEXTURE_2D);
+    // Sky Blue background
+    glClearColor(0.529f, 0.808f, 0.922f, 1.0f);
 
-    // Texture & atlas initialization (moved to TextureAtlas)
+    // Texture & atlas initialization
     TextureAtlas atlas;
-    atlas.loadFallbacks();
-    std::vector<std::string> tryPaths = {
-        "assets/atlas.png", 
-        "./assets/atlas.png", 
-        "../assets/atlas.png", 
-        "../../assets/atlas.png",
-        "sfml-pong/assets/atlas.png",
-        "sfml-pong/build_fix/assets/atlas.png",
-        "build_fix/assets/atlas.png"
-    };
-    for (auto &p : tryPaths){ if (atlas.loadAtlas(p)) { std::cout << "Loaded atlas: " << p << "\n"; break; } }
+    std::string assetsDir = findAssetsDirectory();
+    std::cout << "Found assets directory: " << assetsDir << "\n";
+    
+    // Load atlas using the found directory
+    std::string atlasPath = assetsDir + "/atlas.png";
+    if (atlas.loadAtlas(atlasPath)) {
+        std::cout << "Loaded atlas: " << atlasPath << "\n";
+    }
+
+    // Load fallbacks if needed, using the detected assets directory
+    if (!atlas.atlasLoaded) {
+        atlas.loadFallbacks(assetsDir);
+    }
 
     // Auto-detect likely tiles for grass-top, grass-side and dirt if atlas loaded
     if (atlas.atlasLoaded){
@@ -146,7 +168,7 @@ int main() {
 
     // ensure procedural fallbacks are generated if needed
     unsigned texSize = 64;
-    if (!atlas.atlasLoaded && !atlas.loadFallbacks()){
+    if (!atlas.atlasLoaded && !atlas.loadFallbacks(assetsDir)){
         std::cout << "Some or all grass textures not found in assets/, generating procedural fallbacks.\n";
         sf::Image img = makeTopImage(texSize); atlas.topTex.loadFromImage(img);
         img = makeSideImage(texSize); atlas.sideTex.loadFromImage(img);
@@ -159,7 +181,7 @@ int main() {
     blocks.push_back({"Dirt", sf::Vector2i{2,0}, sf::Vector2i{2,0}, sf::Vector2i{2,0}});
     // grass block: top/side/bottom
     if (atlas.atlasLoaded) {
-        blocks.push_back({"Grass", sf::Vector2i{0,0}, sf::Vector2i{3,0}, sf::Vector2i{2,0}});
+        blocks.push_back({"Grass", sf::Vector2i{11,8}, sf::Vector2i{11,8}, sf::Vector2i{11,8}});
         blocks.push_back({"Stone", sf::Vector2i{1,0}, sf::Vector2i{1,0}, sf::Vector2i{1,0}});
     } else {
         blocks.push_back({"Grass", sf::Vector2i{0,0}, sf::Vector2i{0,0}, sf::Vector2i{2,0}}); // Fallback
@@ -331,7 +353,8 @@ if (hudFont.openFromFile("assets/arial.ttf") || hudFont.openFromFile("C:/Windows
                     int xi = std::clamp(int(round(playerPos.x + half)), 0, CHUNK-1);
                     int zi = std::clamp(int(round(playerPos.z + half)), 0, CHUNK-1);
                     float groundY = static_cast<float>(getHeightAt(xi, zi)) + eyeHeight;
-                    if (playerPos.y < groundY) playerPos.y = groundY;
+                    // Ensure we spawn slightly above ground to avoid sticking
+                    if (playerPos.y < groundY + 0.5f) playerPos.y = groundY + 0.5f;
                     playerVy = 0.f;
                     canJump = true;
                     std::cout << "FPS mode " << (fpsMode ? "ON" : "OFF") << "\n";
@@ -582,6 +605,59 @@ if (hudFont.openFromFile("assets/arial.ttf") || hudFont.openFromFile("C:/Windows
 
         // Clear
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // Draw Sun (Skybox style - rotation only)
+        {
+            glPushMatrix();
+            // Remove translation from view matrix to make sun infinite
+            float viewM[16];
+            glGetFloatv(GL_MODELVIEW_MATRIX, viewM);
+            viewM[12] = 0.f; viewM[13] = 0.f; viewM[14] = 0.f;
+            glLoadMatrixf(viewM);
+
+            glDisable(GL_TEXTURE_2D);
+            glDisable(GL_DEPTH_TEST);
+            
+            // Sun direction: Fixed (e.g. Noon or late afternoon)
+            sf::Vector3f sunDir = {0.3f, 0.8f, -0.2f};
+            float sl = sqrt(sunDir.x*sunDir.x + sunDir.y*sunDir.y + sunDir.z*sunDir.z);
+            sunDir = {sunDir.x/sl, sunDir.y/sl, sunDir.z/sl};
+            
+            float sunDist = 80.0f; // Push it out further
+            float sunSize = 12.0f; // Make it bigger
+            sf::Vector3f sunPos = {sunDir.x * sunDist, sunDir.y * sunDist, sunDir.z * sunDist};
+            
+            glTranslatef(sunPos.x, sunPos.y, sunPos.z);
+            
+            // Billboard rotation: Face the origin
+            sf::Vector3f f = {-sunDir.x, -sunDir.y, -sunDir.z}; // forward
+            sf::Vector3f up = {0.f, 1.f, 0.f};
+            if (std::abs(f.y) > 0.99f) up = {1.f, 0.f, 0.f}; // Gimbal lock fix
+            sf::Vector3f r = {up.y*f.z - up.z*f.y, up.z*f.x - up.x*f.z, up.x*f.y - up.y*f.x}; // right
+            float rl = sqrt(r.x*r.x + r.y*r.y + r.z*r.z); r = {r.x/rl, r.y/rl, r.z/rl};
+            sf::Vector3f u = {f.y*r.z - f.z*r.y, f.z*r.x - f.x*r.z, f.x*r.y - f.y*r.x}; // up
+            
+            float lookMat[16] = {
+                r.x, r.y, r.z, 0.f,
+                u.x, u.y, u.z, 0.f,
+                f.x, f.y, f.z, 0.f,
+                0.f, 0.f, 0.f, 1.f
+            };
+            glMultMatrixf(lookMat);
+
+            glColor3f(1.0f, 1.0f, 0.0f);
+            
+            glBegin(GL_QUADS);
+                glVertex3f(-sunSize, -sunSize, 0.f);
+                glVertex3f( sunSize, -sunSize, 0.f);
+                glVertex3f( sunSize,  sunSize, 0.f);
+                glVertex3f(-sunSize,  sunSize, 0.f);
+            glEnd();
+            
+            glEnable(GL_DEPTH_TEST);
+            glEnable(GL_TEXTURE_2D);
+            glPopMatrix();
+        }
 
         // Render terrain grid of blocks
         glColor3f(1,1,1);

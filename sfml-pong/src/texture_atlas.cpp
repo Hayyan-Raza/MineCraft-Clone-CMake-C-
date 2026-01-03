@@ -23,10 +23,12 @@ bool TextureAtlas::loadAtlas(const std::string &path){
     return false;
 }
 
-bool TextureAtlas::loadFallbacks(){
-    bool loadedTop = topTex.loadFromFile("assets/grass_top.png");
-    bool loadedSide = sideTex.loadFromFile("assets/grass_side.png");
-    bool loadedDirt = dirtTex.loadFromFile("assets/dirt.png");
+bool TextureAtlas::loadFallbacks(const std::string& assetsDir){
+    std::string d = assetsDir;
+    if (d.back() != '/' && d.back() != '\\') d += "/";
+    bool loadedTop = topTex.loadFromFile(d + "grass_top.png");
+    bool loadedSide = sideTex.loadFromFile(d + "grass_side.png");
+    bool loadedDirt = dirtTex.loadFromFile(d + "dirt.png");
     topTex.setSmooth(false); topTex.setRepeated(false);
     sideTex.setSmooth(false); sideTex.setRepeated(false);
     dirtTex.setSmooth(false); dirtTex.setRepeated(false);

@@ -15,7 +15,7 @@ struct TextureAtlas {
     sf::Vector2i DIRT_TILE{2,0};
 
     bool loadAtlas(const std::string &path);
-    bool loadFallbacks();
+    bool loadFallbacks(const std::string& assetsDir = "assets/");
     std::array<float,4> getUV_fromAtlasTile(const sf::Vector2i &tile) const;
     void bindTop() const;
     void bindSide() const;
