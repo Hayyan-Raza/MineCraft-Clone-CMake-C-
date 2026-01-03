@@ -1,0 +1,9 @@
+# Build
+/build/
+
+# Visual Studio Code
+.vscode/
+
+# OS files
+Thumbs.db
+.DS_Store
