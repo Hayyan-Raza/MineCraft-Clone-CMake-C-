@@ -4,6 +4,13 @@
 #include <GL/gl.h>
 #include <iostream>
 #include <random>
+#include <cstdio>
+#include <algorithm>
+#include <vector>
+#include <string>
+#include "texture_atlas.h"
+#include "world.h"
+#include "rendering.h"
 
 static sf::Image makeTopImage(unsigned size){
     sf::Image img(sf::Vector2u{size, size}, sf::Color::Transparent);
@@ -63,7 +70,7 @@ static sf::Image makeDirtImage(unsigned size){
 
 int main() {
     const unsigned WINDOW_W = 800, WINDOW_H = 600;
-    sf::Window window(sf::VideoMode(sf::Vector2u{WINDOW_W, WINDOW_H}), "Cube - Textured (Minecraft-like)");
+    sf::RenderWindow window(sf::VideoMode(sf::Vector2u{WINDOW_W, WINDOW_H}), "Cube - Textured (Minecraft-like)");
     window.setFramerateLimit(60);
 
     // Basic GL setup
@@ -71,52 +78,208 @@ int main() {
     glEnable(GL_TEXTURE_2D);
     glClearColor(0.1f, 0.1f, 0.12f, 1.0f);
 
-    // Create textures (try loading specific textures from assets/ first, else generate)
-    const unsigned texSize = 64;
-    sf::Texture topTex, sideTex, dirtTex;
-    bool loadedTop = topTex.loadFromFile("assets/grass_top.png");
-    bool loadedSide = sideTex.loadFromFile("assets/grass_side.png");
-    bool loadedDirt = dirtTex.loadFromFile("assets/dirt.png");
+    // Texture & atlas initialization (moved to TextureAtlas)
+    TextureAtlas atlas;
+    atlas.loadFallbacks();
+    std::vector<std::string> tryPaths = {
+        "assets/atlas.png", 
+        "./assets/atlas.png", 
+        "../assets/atlas.png", 
+        "../../assets/atlas.png",
+        "sfml-pong/assets/atlas.png",
+        "sfml-pong/build_fix/assets/atlas.png",
+        "build_fix/assets/atlas.png"
+    };
+    for (auto &p : tryPaths){ if (atlas.loadAtlas(p)) { std::cout << "Loaded atlas: " << p << "\n"; break; } }
 
-    // Atlas support: if an atlas is present, use it instead. Configure tile size and
-    // tile coordinates (col,row) for top/side/dirt below.
-    sf::Texture atlasTex;
-    const unsigned ATLAS_TILE_SIZE = 16; // default tile pixel size in the atlas
-    // Default tile coords (col, row). Adjust these if your atlas arranges tiles differently.
-    const sf::Vector2i TOP_TILE{0, 0};   // (col,row) for grass top tile in atlas
-    const sf::Vector2i SIDE_TILE{1, 0};  // for grass side tile
-    const sf::Vector2i DIRT_TILE{2, 0};  // for dirt tile
-    bool atlasLoaded = atlasTex.loadFromFile("assets/atlas.png");
-    if (atlasLoaded) {
-        std::cout << "Loaded atlas: assets/atlas.png\n";
-        atlasTex.setSmooth(false);
+    // Auto-detect likely tiles for grass-top, grass-side and dirt if atlas loaded
+    if (atlas.atlasLoaded){
+        try{
+            sf::Image atlasImg = atlas.atlasTex.copyToImage();
+            struct Scores { float green=0.f; float brown=0.f; float topGreenFrac=0.f; float bottomBrownFrac=0.f; };
+            std::vector<Scores> scores(atlas.atlasCols * atlas.atlasRows);
+            for(int ty=0; ty<atlas.atlasRows; ++ty){
+                for(int tx=0; tx<atlas.atlasCols; ++tx){
+                    Scores s;
+                    int baseX = tx * atlas.atlasTileSize;
+                    int baseY = ty * atlas.atlasTileSize;
+                    int total = atlas.atlasTileSize * atlas.atlasTileSize;
+                    int topCount=0, topGreen=0;
+                    int bottomCount=0, bottomBrown=0;
+                    for(int y=0;y<atlas.atlasTileSize;++y){
+                        for(int x=0;x<atlas.atlasTileSize;++x){
+                            auto c = atlasImg.getPixel(sf::Vector2u{static_cast<unsigned>(baseX + x), static_cast<unsigned>(baseY + y)});
+                            float r = static_cast<float>(c.r);
+                            float g = static_cast<float>(c.g);
+                            float b = static_cast<float>(c.b);
+                            s.green += std::max(0.f, g - (r + b) * 0.5f);
+                            s.brown += std::max(0.f, r - (g + b) * 0.5f);
+                            if (y < atlas.atlasTileSize/4){ ++topCount; if (g > r + 8 && g > b + 8) ++topGreen; }
+                            if (y >= atlas.atlasTileSize/2){ ++bottomCount; if (r > g + 6 && r > b) ++bottomBrown; }
+                        }
+                    }
+                    s.topGreenFrac = topCount ? (float)topGreen / (float)topCount : 0.f;
+                    s.bottomBrownFrac = bottomCount ? (float)bottomBrown / (float)bottomCount : 0.f;
+                    s.green /= static_cast<float>(total);
+                    s.brown /= static_cast<float>(total);
+                    scores[ty * atlas.atlasCols + tx] = s;
+                }
+            }
+
+            float bestTopScore = -1.f; sf::Vector2i bestTop{0,0};
+            float bestDirtScore = -1.f; sf::Vector2i bestDirt{0,0};
+            float bestSideScore = -1.f; sf::Vector2i bestSide{0,0};
+            for(int ty=0; ty<atlas.atlasRows; ++ty){
+                for(int tx=0; tx<atlas.atlasCols; ++tx){
+                    auto &s = scores[ty*atlas.atlasCols + tx];
+                    float topScore = s.green * (0.7f + 0.6f * s.topGreenFrac);
+                    float dirtScore = s.brown;
+                    float sideScore = s.topGreenFrac * (0.5f + s.bottomBrownFrac);
+                    if (topScore > bestTopScore){ bestTopScore = topScore; atlas.TOP_TILE = {tx,ty}; }
+                    if (dirtScore > bestDirtScore){ bestDirtScore = dirtScore; atlas.DIRT_TILE = {tx,ty}; }
+                    if (sideScore > bestSideScore){ bestSideScore = sideScore; atlas.SIDE_TILE = {tx,ty}; }
+                }
+            }
+            std::cout << "Auto-detected tiles: TOP(" << atlas.TOP_TILE.x << "," << atlas.TOP_TILE.y << ") SIDE(" << atlas.SIDE_TILE.x << "," << atlas.SIDE_TILE.y << ") DIRT(" << atlas.DIRT_TILE.x << "," << atlas.DIRT_TILE.y << ")\n";
+        } catch(...){ std::cout << "Atlas auto-detection failed, keep defaults.\n"; }
     }
 
-    if (!atlasLoaded && (!loadedTop || !loadedSide || !loadedDirt)) {
+    // ensure procedural fallbacks are generated if needed
+    unsigned texSize = 64;
+    if (!atlas.atlasLoaded && !atlas.loadFallbacks()){
         std::cout << "Some or all grass textures not found in assets/, generating procedural fallbacks.\n";
-        if (!loadedTop){
-            sf::Image img = makeTopImage(texSize);
-            if (!topTex.loadFromImage(img)) std::cerr << "Failed to load generated top texture\n";
-            else loadedTop = true;
-        }
-        if (!loadedSide){
-            sf::Image img = makeSideImage(texSize);
-            if (!sideTex.loadFromImage(img)) std::cerr << "Failed to load generated side texture\n";
-            else loadedSide = true;
-        }
-        if (!loadedDirt){
-            sf::Image img = makeDirtImage(texSize);
-            if (!dirtTex.loadFromImage(img)) std::cerr << "Failed to load generated dirt texture\n";
-            else loadedDirt = true;
-        }
+        sf::Image img = makeTopImage(texSize); atlas.topTex.loadFromImage(img);
+        img = makeSideImage(texSize); atlas.sideTex.loadFromImage(img);
+        img = makeDirtImage(texSize); atlas.dirtTex.loadFromImage(img);
     }
 
-    topTex.setSmooth(false);
-    sideTex.setSmooth(false);
-    dirtTex.setSmooth(false);
+    // --- Block definition and terrain ----------------------------------
+    std::vector<Block> blocks;
+    // user-specified dirt block (all faces same tile)
+    blocks.push_back({"Dirt", sf::Vector2i{2,0}, sf::Vector2i{2,0}, sf::Vector2i{2,0}});
+    // grass block: top/side/bottom
+    if (atlas.atlasLoaded) {
+        blocks.push_back({"Grass", sf::Vector2i{0,0}, sf::Vector2i{3,0}, sf::Vector2i{2,0}});
+        blocks.push_back({"Stone", sf::Vector2i{1,0}, sf::Vector2i{1,0}, sf::Vector2i{1,0}});
+    } else {
+        blocks.push_back({"Grass", sf::Vector2i{0,0}, sf::Vector2i{0,0}, sf::Vector2i{2,0}}); // Fallback
+        blocks.push_back({"Stone", sf::Vector2i{2,0}, sf::Vector2i{2,0}, sf::Vector2i{2,0}}); // Fallback to Dirt
+    }
+
+    int currentBlockIndex = 1; // Grass by default
+
+    // Terrain seed and generation (uses world module)
+    int terrainSeed = 123;
+    generateTerrain(terrainSeed);
+
+
+
+
+
+    
+
+    std::cout << "Controls: Arrow keys = rotate camera, W/S = zoom (or fly forward/back when Fly is ON), A/D/Q/E = pan (or strafe when Fly is ON), R = regenerate terrain (seed+1), M = random seed, 1/2 = select blocks, F = toggle Fly, C = toggle FPS, V = invert mouse\n"
+              << "T/Y = cycle top tile, G/H = cycle side tile, B/N = cycle dirt tile, +/- or PgUp/PgDn = adjust fly speed. ESC = exit.\n";
+
+
+    // Camera (orbit) parameters
+    float camDistance = 5.0f;
+    float camYawDeg = 45.0f;
+    float camPitchDeg = -10.0f;
+    sf::Vector3f camCenter{0.f, 0.f, 0.f};
+
+    // Mouse control state
+    bool rotating = false;
+    bool panning = false;
+    sf::Vector2i lastMouse{0,0};
+    float mouseRotateSpeed = 0.25f; // degrees per pixel
+    float mousePanFactor = 0.01f;   // world units per pixel
+    float scrollZoomSpeed = 0.8f;   // units per scroll step
+
+    std::cout << "Controls: Arrow keys = rotate camera, W/S = zoom, A/D/Q/E = pan, R = regenerate terrain, Space = random seed,\n"
+                 "Mouse: Left-drag = rotate, Right-drag = pan, Scroll = zoom.\n"
+                 "T/Y = cycle top tile, G/H = cycle side tile, B/N = cycle dirt tile. ESC = exit.\n";
 
     float angle = 0.f;
     sf::Clock clock;
+
+    // FPS counter and HUD
+    int frameCount = 0;
+    float fps = 0.f;
+    float fpsAccum = 0.f;
+    sf::Font hudFont;
+    bool haveFont = false;
+    // try project font first (assets), else try system Arial
+if (hudFont.openFromFile("assets/arial.ttf") || hudFont.openFromFile("C:/Windows/Fonts/arial.ttf")){
+        haveFont = true;
+    }
+    // Construct Text with font and character size (SFML3 requires arguments)
+    sf::Text fpsText(hudFont, "", 16);
+    if (haveFont){
+        fpsText.setFillColor(sf::Color::White);
+        fpsText.setPosition(sf::Vector2f{6.f, 6.f});
+    }
+
+    // Built-in 3x5 pixel digit font used when no TTF is available
+    static const unsigned char DIGITS[10][5] = {
+        {0b111,0b101,0b101,0b101,0b111}, //0
+        {0b010,0b110,0b010,0b010,0b111}, //1
+        {0b111,0b001,0b111,0b100,0b111}, //2
+        {0b111,0b001,0b111,0b001,0b111}, //3
+        {0b101,0b101,0b111,0b001,0b001}, //4
+        {0b111,0b100,0b111,0b001,0b111}, //5
+        {0b111,0b100,0b111,0b101,0b111}, //6
+        {0b111,0b001,0b010,0b010,0b010}, //7
+        {0b111,0b101,0b111,0b101,0b111}, //8
+        {0b111,0b101,0b111,0b001,0b111}  //9
+    };
+    auto drawBitmapText = [&](const std::string &s, int px, int py, int scale){
+        // draw using small rectangles via SFML shapes (push GL states first)
+        sf::RectangleShape rect(sf::Vector2f((float)scale, (float)scale));
+        int x = px;
+        for(char c : s){
+            if (c >= '0' && c <= '9'){
+                int d = c - '0';
+                for(int ry=0; ry<5; ++ry){
+                    unsigned row = DIGITS[d][ry];
+                    for(int rx=0; rx<3; ++rx){
+                        if (row & (1u << (2-rx))){
+                            rect.setPosition(sf::Vector2f{(float)(x + rx*scale), (float)(py + ry*scale)});
+                            rect.setFillColor(sf::Color::White);
+                            window.draw(rect);
+                        }
+                    }
+                }
+                x += (3 + 1) * scale;
+            } else {
+                // simple spacer for other chars
+                x += (3 + 1) * scale;
+            }
+        }
+    };
+
+    // Fly / creative mode
+    bool flyMode = false;
+    float flySpeed = 6.0f; // units/sec
+    float flySpeedBoost = 2.5f; // multiplier for LCtrl
+    bool showSpeed = true; // show speed on HUD
+
+    // FPS (first-person) mode
+    bool fpsMode = false;
+    sf::Vector3f playerPos{0.f, 2.f, 0.f};
+    float playerVy = 0.f;
+    bool canJump = false;
+    float gravity = 20.0f;
+    const float eyeHeight = 1.62f;
+    const float walkSpeed = 4.0f;
+    const float sprintMultiplier = 1.9f;
+    float mouseLookSpeed = 0.15f; // degrees per pixel-ish
+    float jumpSpeed = 6.5f; // upward impulse
+    bool invertMouse = false; // invert Y axis for mouse look (toggle V)
+    
+    // Keep last mouse so we can re-center for FPS look
+    sf::Vector2i fpsCenterMouse{0,0};
+
 
     while (window.isOpen()) {
         // Events
@@ -126,13 +289,240 @@ int main() {
             if (event.is<sf::Event::KeyPressed>()){
                 auto kp = event.getIf<sf::Event::KeyPressed>();
                 if (kp->code == sf::Keyboard::Key::Escape) window.close();
+                // atlas tile cycling keys (only meaningful when atlas is loaded)
+                if (atlas.atlasLoaded){
+                    if (kp->code == sf::Keyboard::Key::T){ atlas.TOP_TILE.x = (atlas.TOP_TILE.x + 1) % std::max(1, atlas.atlasCols); std::cout << "TOP tile = (" << atlas.TOP_TILE.x << "," << atlas.TOP_TILE.y << ")\n"; }
+                    if (kp->code == sf::Keyboard::Key::Y){ atlas.TOP_TILE.y = (atlas.TOP_TILE.y + 1) % std::max(1, atlas.atlasRows); std::cout << "TOP tile = (" << atlas.TOP_TILE.x << "," << atlas.TOP_TILE.y << ")\n"; }
+                    if (kp->code == sf::Keyboard::Key::G){ atlas.SIDE_TILE.x = (atlas.SIDE_TILE.x + 1) % std::max(1, atlas.atlasCols); std::cout << "SIDE tile = (" << atlas.SIDE_TILE.x << "," << atlas.SIDE_TILE.y << ")\n"; }
+                    if (kp->code == sf::Keyboard::Key::H){ atlas.SIDE_TILE.y = (atlas.SIDE_TILE.y + 1) % std::max(1, atlas.atlasRows); std::cout << "SIDE tile = (" << atlas.SIDE_TILE.x << "," << atlas.SIDE_TILE.y << ")\n"; }
+                    if (kp->code == sf::Keyboard::Key::B){ atlas.DIRT_TILE.x = (atlas.DIRT_TILE.x + 1) % std::max(1, atlas.atlasCols); std::cout << "DIRT tile = (" << atlas.DIRT_TILE.x << "," << atlas.DIRT_TILE.y << ")\n"; }
+                    if (kp->code == sf::Keyboard::Key::N){ atlas.DIRT_TILE.y = (atlas.DIRT_TILE.y + 1) % std::max(1, atlas.atlasRows); std::cout << "DIRT tile = (" << atlas.DIRT_TILE.x << "," << atlas.DIRT_TILE.y << ")\n"; }
+                }
+
+                // Terrain and block controls
+                if (kp->code == sf::Keyboard::Key::R){ generateTerrain(terrainSeed + 1); }
+                if (kp->code == sf::Keyboard::Key::M){ std::random_device rd; generateTerrain(rd()); }
+                // Jump when in FPS walking mode; otherwise Space was moved to M earlier
+                if (kp->code == sf::Keyboard::Key::Space){ if (fpsMode && !flyMode && canJump){ playerVy = jumpSpeed; canJump = false; } }
+                if (kp->code == sf::Keyboard::Key::F){ flyMode = !flyMode; std::cout << "Fly mode " << (flyMode ? "ON" : "OFF") << "\n"; }
+                // Mouse sensitivity +/-, jump speed U/J, gravity I/K, reset 0
+                if (kp->code == sf::Keyboard::Key::LBracket){ mouseLookSpeed = std::max(0.01f, mouseLookSpeed - 0.01f); std::cout << "Mouse sens = " << mouseLookSpeed << "\n"; }
+                if (kp->code == sf::Keyboard::Key::RBracket){ mouseLookSpeed = std::min(5.0f, mouseLookSpeed + 0.01f); std::cout << "Mouse sens = " << mouseLookSpeed << "\n"; }
+                if (kp->code == sf::Keyboard::Key::U){ jumpSpeed += 0.5f; std::cout << "Jump = " << jumpSpeed << "\n"; }
+                if (kp->code == sf::Keyboard::Key::J){ jumpSpeed = std::max(0.5f, jumpSpeed - 0.5f); std::cout << "Jump = " << jumpSpeed << "\n"; }
+                if (kp->code == sf::Keyboard::Key::I){ /* increase gravity */ const_cast<float&>(gravity) += 1.0f; std::cout << "Gravity = " << gravity << "\n"; }
+                if (kp->code == sf::Keyboard::Key::K){ const_cast<float&>(gravity) = std::max(0.1f, gravity - 1.0f); std::cout << "Gravity = " << gravity << "\n"; }
+                if (kp->code == sf::Keyboard::Key::Num0){ mouseLookSpeed = 0.15f; jumpSpeed = 6.5f; gravity = 20.0f; std::cout << "Tunables reset\n"; }
+                if (kp->code == sf::Keyboard::Key::V){ invertMouse = !invertMouse; std::cout << "Invert mouse " << (invertMouse ? "ON" : "OFF") << "\n"; }
+                if (kp->code == sf::Keyboard::Key::Equal || kp->code == sf::Keyboard::Key::Add || kp->code == sf::Keyboard::Key::PageUp){ flySpeed *= 1.1f; if (flySpeed > 100.f) flySpeed = 100.f; std::cout << "Fly speed = " << flySpeed << "\n"; }
+                if (kp->code == sf::Keyboard::Key::Hyphen || kp->code == sf::Keyboard::Key::Subtract || kp->code == sf::Keyboard::Key::PageDown){ flySpeed /= 1.1f; if (flySpeed < 0.01f) flySpeed = 0.01f; std::cout << "Fly speed = " << flySpeed << "\n"; }
+                if (kp->code == sf::Keyboard::Key::C){
+                    fpsMode = !fpsMode;
+                    auto s = window.getSize();
+                    fpsCenterMouse = sf::Vector2i{static_cast<int>(s.x/2), static_cast<int>(s.y/2)};
+                    sf::Mouse::setPosition(fpsCenterMouse, window);
+                    window.setMouseCursorVisible(!fpsMode);
+                    window.setMouseCursorGrabbed(fpsMode);
+                    // set initial player position from camera center
+                    playerPos.x = camCenter.x;
+                    playerPos.z = camCenter.z;
+                    // place player above terrain
+                    int half = CHUNK/2;
+                    int xi = std::clamp(int(round(playerPos.x + half)), 0, CHUNK-1);
+                    int zi = std::clamp(int(round(playerPos.z + half)), 0, CHUNK-1);
+                    float groundY = static_cast<float>(getHeightAt(xi, zi)) + eyeHeight;
+                    if (playerPos.y < groundY) playerPos.y = groundY;
+                    playerVy = 0.f;
+                    canJump = true;
+                    std::cout << "FPS mode " << (fpsMode ? "ON" : "OFF") << "\n";
+                }
+                if (kp->code == sf::Keyboard::Key::Num1){ currentBlockIndex = 0; std::cout << "Selected block: " << blocks[currentBlockIndex].name << "\n"; }
+                if (kp->code == sf::Keyboard::Key::Num2){ if (blocks.size() > 1) { currentBlockIndex = 1; std::cout << "Selected block: " << blocks[currentBlockIndex].name << "\n"; } }
+            } else if (event.is<sf::Event::MouseButtonPressed>()){
+                auto mb = event.getIf<sf::Event::MouseButtonPressed>();
+                if (mb->button == sf::Mouse::Button::Left){ rotating = true; lastMouse = sf::Mouse::getPosition(window); }
+                if (mb->button == sf::Mouse::Button::Right){ panning = true; lastMouse = sf::Mouse::getPosition(window); }
+            } else if (event.is<sf::Event::MouseButtonReleased>()){
+                auto mb = event.getIf<sf::Event::MouseButtonReleased>();
+                if (mb->button == sf::Mouse::Button::Left) rotating = false;
+                if (mb->button == sf::Mouse::Button::Right) panning = false;
+            } else if (event.is<sf::Event::MouseMoved>()){
+                // In FPS mode we don't use event-driven mouse moves; we poll relative to center each frame.
+                if (fpsMode) {
+                    // ignore
+                } else {
+                    // Use global mouse position (safer API across SFML versions)
+                    sf::Vector2i cur = sf::Mouse::getPosition(window);
+                    sf::Vector2i d = cur - lastMouse;
+                    lastMouse = cur;
+                    if (rotating){
+                        float sign = invertMouse ? -1.f : 1.f;
+                        camYawDeg += static_cast<float>(d.x) * mouseRotateSpeed * sign;
+                        camPitchDeg += static_cast<float>(d.y) * mouseRotateSpeed * sign;
+                        if (camPitchDeg > 89.f) camPitchDeg = 89.f;
+                        if (camPitchDeg < -89.f) camPitchDeg = -89.f;
+                    }
+                    if (panning){
+                        float panFactor = mousePanFactor * camDistance;
+                        camCenter.x -= static_cast<float>(d.x) * panFactor;
+                        camCenter.y += static_cast<float>(d.y) * panFactor;
+                    }
+                }
+            } else if (event.is<sf::Event::MouseWheelScrolled>()){
+                auto ws = event.getIf<sf::Event::MouseWheelScrolled>();
+                camDistance -= ws->delta * scrollZoomSpeed;
+                if (camDistance < 1.f) camDistance = 1.f;
             }
         }
 
         float dt = clock.restart().asSeconds();
-        angle += 60.f * dt; // degrees per second
+        angle += 30.f * dt; // cube self-rotation
 
-        // Prepare viewport & projection
+        // FPS accounting
+        frameCount++;
+        fpsAccum += dt;
+        if (fpsAccum >= 1.0f){
+            fps = static_cast<float>(frameCount) / fpsAccum;
+            frameCount = 0;
+            fpsAccum = 0.f;
+            char buf[256];
+            snprintf(buf, sizeof(buf), "Cube - Textured (Minecraft-like) - FPS: %.0f%s", fps, (flyMode ? " - FLY" : ""));
+            window.setTitle(buf);
+            if (haveFont) fpsText.setString(std::to_string(static_cast<int>(fps)) + " FPS");
+        }
+
+        // Handle continuous camera controls (keyboard held)
+        const float yawSpeed = 90.f; // deg/sec
+        const float pitchSpeed = 80.f; // deg/sec
+        const float zoomSpeed = 3.f; // units/sec
+        const float panSpeed = 2.f; // units/sec
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Left)) camYawDeg -= yawSpeed * dt;
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Right)) camYawDeg += yawSpeed * dt;
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Up)) camPitchDeg += pitchSpeed * dt;
+        if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Down)) camPitchDeg -= pitchSpeed * dt;
+        if (fpsMode){
+            // FPS mouse look: read cursor delta relative to center and re-center every frame
+            auto sz = window.getSize();
+            sf::Vector2i center{static_cast<int>(sz.x/2), static_cast<int>(sz.y/2)};
+            sf::Vector2i cur = sf::Mouse::getPosition(window);
+            sf::Vector2i d = cur - center;
+            // always reset mouse to center so we can get relative movement next frame
+            sf::Mouse::setPosition(center, window);
+            if (d.x != 0 || d.y != 0){
+                float sign = invertMouse ? -1.f : 1.f;
+                camYawDeg += static_cast<float>(d.x) * mouseLookSpeed * sign;
+                camPitchDeg += static_cast<float>(d.y) * mouseLookSpeed * sign;
+                if (camPitchDeg > 89.f) camPitchDeg = 89.f;
+                if (camPitchDeg < -89.f) camPitchDeg = -89.f;
+            }
+
+            // Movement on XZ plane for walking
+            float yawR = camYawDeg * 3.14159265f / 180.f;
+            sf::Vector3f forwardXZ{ sinf(yawR), 0.f, cosf(yawR) };
+            sf::Vector3f rightXZ{ forwardXZ.z, 0.f, -forwardXZ.x };
+            float fwd=0.f, rgt=0.f;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W)) fwd += 1.f;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::S)) fwd -= 1.f;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D)) rgt += 1.f;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A)) rgt -= 1.f;
+            // invert strafing when invertMouse is set
+            rgt *= (invertMouse ? -1.f : 1.f);
+            float speed = walkSpeed;
+            bool sprinting = false;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift)) { speed *= sprintMultiplier; sprinting = true; }
+
+            if (flyMode){
+                // Fly-style FPS (no gravity), include pitch for forward/back
+                float pitchR = camPitchDeg * 3.14159265f / 180.f;
+                sf::Vector3f forward{ sinf(yawR) * cosf(pitchR), sinf(pitchR), cosf(yawR) * cosf(pitchR) };
+                sf::Vector3f right{ forward.y*0.f - forward.z*0.f, forward.z*1.f - forward.x*0.f, forward.x*0.f - forward.y*1.f };
+                float upf = 0.f;
+                if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space)) upf += 1.f;
+                if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) upf -= 1.f;
+                sf::Vector3f delta = sf::Vector3f{ forward.x * fwd + right.x * rgt, forward.y * fwd + upf, forward.z * fwd + right.z * rgt };
+                playerPos.x += delta.x * speed * dt;
+                playerPos.y += delta.y * speed * dt;
+                playerPos.z += delta.z * speed * dt;
+            } else {
+                // walking with gravity and simple block collision
+                sf::Vector3f delta = sf::Vector3f{ forwardXZ.x * fwd + rightXZ.x * rgt, 0.f, forwardXZ.z * fwd + rightXZ.z * rgt };
+                float moveX = delta.x * speed * dt;
+                float moveZ = delta.z * speed * dt;
+                float oldX = playerPos.x;
+                float oldZ = playerPos.z;
+
+                // attempt X movement
+                playerPos.x += moveX;
+                int half = CHUNK/2;
+                int xi = std::clamp(int(round(playerPos.x + half)), 0, CHUNK-1);
+                int zi = std::clamp(int(round(playerPos.z + half)), 0, CHUNK-1);
+                float footY = playerPos.y - eyeHeight;
+                if (getHeightAt(xi, zi) > footY + 0.2f){ // blocked
+                    playerPos.x = oldX; // rollback X
+                }
+
+                // attempt Z movement
+                playerPos.z += moveZ;
+                xi = std::clamp(int(round(playerPos.x + half)), 0, CHUNK-1);
+                zi = std::clamp(int(round(playerPos.z + half)), 0, CHUNK-1);
+                if (getHeightAt(xi, zi) > footY + 0.2f){ // blocked
+                    playerPos.z = oldZ; // rollback Z
+                }
+
+                // Apply gravity
+                playerVy -= gravity * dt;
+                playerPos.y += playerVy * dt;
+
+                // ground collision
+                xi = std::clamp(int(round(playerPos.x + half)), 0, CHUNK-1);
+                zi = std::clamp(int(round(playerPos.z + half)), 0, CHUNK-1);
+                float groundY = static_cast<float>(getHeightAt(xi, zi)) + eyeHeight;
+                if (playerPos.y <= groundY){
+                    playerPos.y = groundY;
+                    playerVy = 0.f;
+                    canJump = true;
+                }
+            }
+        } else if (!flyMode){
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W)) camDistance -= zoomSpeed * dt;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::S)) camDistance += zoomSpeed * dt;
+            float hSign = invertMouse ? -1.f : 1.f;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A)) camCenter.x -= panSpeed * dt * hSign;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D)) camCenter.x += panSpeed * dt * hSign;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Q)) camCenter.y += panSpeed * dt;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::E)) camCenter.y -= panSpeed * dt;
+        } else {
+            // Fly movement: W/S forward/back, A/D strafe, Space up, LShift down
+            float yawR = camYawDeg * 3.14159265f / 180.f;
+            float pitchR = camPitchDeg * 3.14159265f / 180.f;
+            sf::Vector3f forward{ sinf(yawR) * cosf(pitchR), sinf(pitchR), cosf(yawR) * cosf(pitchR) };
+            sf::Vector3f upVec{0.f,1.f,0.f};
+            sf::Vector3f right{ forward.y*upVec.z - forward.z*upVec.y, forward.z*upVec.x - forward.x*upVec.z, forward.x*upVec.y - forward.y*upVec.x };
+            auto normalize3 = [](sf::Vector3f v)->sf::Vector3f{ float l = sqrtf(v.x*v.x+v.y*v.y+v.z*v.z); if (l==0.f) return v; return sf::Vector3f{v.x/l, v.y/l, v.z/l}; };
+            forward = normalize3(forward);
+            right = normalize3(right);
+            float fwd=0.f, rgt=0.f, upf=0.f;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W)) fwd += 1.f;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::S)) fwd -= 1.f;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D)) rgt += 1.f;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A)) rgt -= 1.f;
+            // invert strafe when invertMouse is set
+            rgt *= (invertMouse ? -1.f : 1.f);
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Space)) upf += 1.f;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift)) upf -= 1.f;
+            float speed = flySpeed;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LControl)) speed *= flySpeedBoost;
+            sf::Vector3f delta{ forward.x * fwd + right.x * rgt, forward.y * fwd + right.y * rgt + upf, forward.z * fwd + right.z * rgt };
+            camCenter.x += delta.x * speed * dt;
+            camCenter.y += delta.y * speed * dt;
+            camCenter.z += delta.z * speed * dt;
+        }
+        // clamp
+        if (camDistance < 1.0f) camDistance = 1.0f;
+        if (camPitchDeg > 89.f) camPitchDeg = 89.f;
+        if (camPitchDeg < -89.f) camPitchDeg = -89.f;
+
+        // Prepare viewport & perspective projection
         auto size = window.getSize();
         int w = static_cast<int>(size.x);
         int h = static_cast<int>(size.y);
@@ -141,150 +531,127 @@ int main() {
         glViewport(0, 0, w, h);
         glMatrixMode(GL_PROJECTION);
         glLoadIdentity();
-        float viewSize = 1.5f;
-        glOrtho(-aspect * viewSize, aspect * viewSize, -viewSize, viewSize, -10.f, 10.f);
+        const float fov = 60.f;
+        const float znear = 0.1f;
+        const float zfar = 100.f;
+        float top = znear * tanf(fov * 3.14159265f / 360.f);
+        float right = top * aspect;
+        glFrustum(-right, right, -top, top, znear, zfar);
 
+        // Camera (view) matrix - compute lookAt and load it into MODELVIEW
         glMatrixMode(GL_MODELVIEW);
         glLoadIdentity();
-        glTranslatef(0.f, 0.f, -5.f);
-        glRotatef(angle, 1.f, 1.f, 0.f);
+        // compute eye position and center from either orbit or FPS mode
+        float yawRad = camYawDeg * 3.14159265f / 180.f;
+        float pitchRad = camPitchDeg * 3.14159265f / 180.f;
+        sf::Vector3f eye;
+        sf::Vector3f center;
+        if (!fpsMode){
+            float ex = camCenter.x + camDistance * cosf(pitchRad) * sinf(yawRad);
+            float ey = camCenter.y + camDistance * sinf(pitchRad);
+            float ez = camCenter.z + camDistance * cosf(pitchRad) * cosf(yawRad);
+            eye = sf::Vector3f{ex, ey, ez};
+            center = sf::Vector3f{camCenter};
+        } else {
+            // First-person: eye is player position, center is position + forward vector
+            eye = playerPos;
+            float fx = sinf(yawRad) * cosf(pitchRad);
+            float fy = sinf(pitchRad);
+            float fz = cosf(yawRad) * cosf(pitchRad);
+            center = sf::Vector3f{eye.x + fx, eye.y + fy, eye.z + fz};
+        }
+
+        // lookAt matrix
+        auto normalize = [](sf::Vector3f v){
+            float l = sqrtf(v.x*v.x + v.y*v.y + v.z*v.z);
+            if (l==0) return v;
+            return sf::Vector3f{v.x/l, v.y/l, v.z/l};
+        };
+        sf::Vector3f f = center - eye; f = normalize(f);
+        sf::Vector3f up{0.f,1.f,0.f};
+        sf::Vector3f s{f.y*up.z - f.z*up.y, f.z*up.x - f.x*up.z, f.x*up.y - f.y*up.x}; // cross(f,up)
+        s = normalize(s);
+        sf::Vector3f u{ s.y*f.z - s.z*f.y, s.z*f.x - s.x*f.z, s.x*f.y - s.y*f.x };
+        float m[16] = {
+            s.x, u.x, -f.x, 0.f,
+            s.y, u.y, -f.y, 0.f,
+            s.z, u.z, -f.z, 0.f,
+            - (s.x*eye.x + s.y*eye.y + s.z*eye.z), - (u.x*eye.x + u.y*eye.y + u.z*eye.z), (f.x*eye.x + f.y*eye.y + f.z*eye.z), 1.f
+        };
+        glLoadMatrixf(m);
 
         // Clear
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // Draw a textured cube
+        // Render terrain grid of blocks
         glColor3f(1,1,1);
-        if (atlasLoaded) {
-            // compute normalized coords for tiles in the atlas
-            auto getUV = [&](const sf::Vector2i &tile){
-                float aw = static_cast<float>(atlasTex.getSize().x);
-                float ah = static_cast<float>(atlasTex.getSize().y);
-                float x0 = (tile.x * ATLAS_TILE_SIZE) / aw;
-                float x1 = (tile.x * ATLAS_TILE_SIZE + ATLAS_TILE_SIZE) / aw;
-                // flip Y for OpenGL coordinates (SFML images origin is top-left)
-                float y0 = 1.0f - (tile.y * ATLAS_TILE_SIZE + ATLAS_TILE_SIZE) / ah; // bottom
-                float y1 = 1.0f - (tile.y * ATLAS_TILE_SIZE) / ah; // top
-                return std::array<float,4>{x0,y0,x1,y1}; // u0,v0,u1,v1
-            };
+        glPushMatrix();
+            const int half = CHUNK/2;
 
-            auto sideUV = getUV(SIDE_TILE);
-            auto topUV = getUV(TOP_TILE);
-            auto dirtUV = getUV(DIRT_TILE);
 
-            // Front (z+)
-            sf::Texture::bind(&atlasTex);
-            glBegin(GL_QUADS);
-                glTexCoord2f(sideUV[0], sideUV[1]); glVertex3f(-1,-1, 1);
-                glTexCoord2f(sideUV[2], sideUV[1]); glVertex3f( 1,-1, 1);
-                glTexCoord2f(sideUV[2], sideUV[3]); glVertex3f( 1, 1, 1);
-                glTexCoord2f(sideUV[0], sideUV[3]); glVertex3f(-1, 1, 1);
-            glEnd();
 
-            // Back (z-)
-            sf::Texture::bind(&atlasTex);
-            glBegin(GL_QUADS);
-                glTexCoord2f(sideUV[2], sideUV[1]); glVertex3f(-1,-1,-1);
-                glTexCoord2f(sideUV[2], sideUV[3]); glVertex3f(-1, 1,-1);
-                glTexCoord2f(sideUV[0], sideUV[3]); glVertex3f( 1, 1,-1);
-                glTexCoord2f(sideUV[0], sideUV[1]); glVertex3f( 1,-1,-1);
-            glEnd();
+            for(int xi=0; xi<CHUNK; ++xi){
+                for(int zi=0; zi<CHUNK; ++zi){
+                    int h = getHeightAt(xi, zi);
+                    for(int yi=0; yi<h; ++yi){
+                        // Determine block type based on depth
+                        // Top level: Grass (index 1)
+                        // Next 3 levels: Dirt (index 0)
+                        // Deeper: Stone (index 2) - check if Stone exists
+                        const Block* bPtr = &blocks[0];
+                        if (yi == h-1) bPtr = &blocks[1];
+                        else if (yi >= h-4) bPtr = &blocks[0];
+                        else if (blocks.size() > 2) bPtr = &blocks[2];
+                        
+                        const Block &b = *bPtr;
+                        float gx = static_cast<float>(xi - half);
+                        float gz = static_cast<float>(zi - half);
+                        float gy = static_cast<float>(yi);
 
-            // Left (x-)
-            sf::Texture::bind(&atlasTex);
-            glBegin(GL_QUADS);
-                glTexCoord2f(sideUV[0], sideUV[1]); glVertex3f(-1,-1,-1);
-                glTexCoord2f(sideUV[2], sideUV[1]); glVertex3f(-1,-1, 1);
-                glTexCoord2f(sideUV[2], sideUV[3]); glVertex3f(-1, 1, 1);
-                glTexCoord2f(sideUV[0], sideUV[3]); glVertex3f(-1, 1,-1);
-            glEnd();
+                        int mask = 0;
+                        if (yi == h-1) mask |= FACE_TOP;
+                        if (yi == 0) mask |= FACE_BOTTOM;
+                        if (isAirAt(xi, zi+1, yi)) mask |= FACE_FRONT;
+                        if (isAirAt(xi, zi-1, yi)) mask |= FACE_BACK;
+                        if (isAirAt(xi+1, zi, yi)) mask |= FACE_RIGHT;
+                        if (isAirAt(xi-1, zi, yi)) mask |= FACE_LEFT;
 
-            // Right (x+)
-            sf::Texture::bind(&atlasTex);
-            glBegin(GL_QUADS);
-                glTexCoord2f(sideUV[2], sideUV[1]); glVertex3f(1,-1,-1);
-                glTexCoord2f(sideUV[2], sideUV[3]); glVertex3f(1, 1,-1);
-                glTexCoord2f(sideUV[0], sideUV[3]); glVertex3f(1, 1, 1);
-                glTexCoord2f(sideUV[0], sideUV[1]); glVertex3f(1,-1, 1);
-            glEnd();
+                        if (mask == 0) continue; // block fully surrounded
+                        drawBlockAt(gx, gy, gz, b, mask, atlas);
+                    }
+                }
+            }
+        glPopMatrix();
 
-            // Top (y+)
-            sf::Texture::bind(&atlasTex);
-            glBegin(GL_QUADS);
-                glTexCoord2f(topUV[0], topUV[1]); glVertex3f(-1,1,-1);
-                glTexCoord2f(topUV[0], topUV[3]); glVertex3f(-1,1, 1);
-                glTexCoord2f(topUV[2], topUV[3]); glVertex3f( 1,1, 1);
-                glTexCoord2f(topUV[2], topUV[1]); glVertex3f( 1,1,-1);
-            glEnd();
-
-            // Bottom (y-)
-            sf::Texture::bind(&atlasTex);
-            glBegin(GL_QUADS);
-                glTexCoord2f(dirtUV[0], dirtUV[1]); glVertex3f(-1,-1,-1);
-                glTexCoord2f(dirtUV[2], dirtUV[1]); glVertex3f( 1,-1,-1);
-                glTexCoord2f(dirtUV[2], dirtUV[3]); glVertex3f( 1,-1, 1);
-                glTexCoord2f(dirtUV[0], dirtUV[3]); glVertex3f(-1,-1, 1);
-            glEnd();
-
-            sf::Texture::bind(nullptr);
+        // Draw HUD overlay
+        window.pushGLStates();
+        // Build status strings
+        std::string modeStr = "Orbit";
+        if (fpsMode) modeStr = flyMode ? "FPS-Fly" : "FPS-Walk";
+        else if (flyMode) modeStr = "Creative-Fly";
+        std::string sprintStr = (fpsMode && sf::Keyboard::isKeyPressed(sf::Keyboard::Key::LShift)) ? "SPRINT" : "";
+        if (haveFont){
+            // show FPS, mode, sprint and optionally speed
+            char buf[256];
+            if (showSpeed) snprintf(buf, sizeof(buf), "%d FPS  | %s %s  | speed=%d  | sens=%.2f jump=%.1f grav=%.1f  | invert=%s", static_cast<int>(fps), modeStr.c_str(), sprintStr.c_str(), static_cast<int>(roundf(flySpeed)), mouseLookSpeed, jumpSpeed, gravity, (invertMouse ? "ON" : "OFF"));
+            else snprintf(buf, sizeof(buf), "%d FPS  | %s %s  | sens=%.2f jump=%.1f grav=%.1f  | invert=%s", static_cast<int>(fps), modeStr.c_str(), sprintStr.c_str(), mouseLookSpeed, jumpSpeed, gravity, (invertMouse ? "ON" : "OFF"));
+            fpsText.setString(buf);
+            window.draw(fpsText);
         } else {
-            // fallback to individual textures (existing behavior)
-            // Front (z+): side texture
-            sf::Texture::bind(&sideTex);
-            glBegin(GL_QUADS);
-                glTexCoord2f(0,0); glVertex3f(-1,-1, 1);
-                glTexCoord2f(1,0); glVertex3f( 1,-1, 1);
-                glTexCoord2f(1,1); glVertex3f( 1, 1, 1);
-                glTexCoord2f(0,1); glVertex3f(-1, 1, 1);
-            glEnd();
-
-            // Back (z-): side texture (mirrored horizontally)
-            sf::Texture::bind(&sideTex);
-            glBegin(GL_QUADS);
-                glTexCoord2f(1,0); glVertex3f(-1,-1,-1);
-                glTexCoord2f(1,1); glVertex3f(-1, 1,-1);
-                glTexCoord2f(0,1); glVertex3f( 1, 1,-1);
-                glTexCoord2f(0,0); glVertex3f( 1,-1,-1);
-            glEnd();
-
-            // Left (x-): side texture
-            sf::Texture::bind(&sideTex);
-            glBegin(GL_QUADS);
-                glTexCoord2f(0,0); glVertex3f(-1,-1,-1);
-                glTexCoord2f(1,0); glVertex3f(-1,-1, 1);
-                glTexCoord2f(1,1); glVertex3f(-1, 1, 1);
-                glTexCoord2f(0,1); glVertex3f(-1, 1,-1);
-            glEnd();
-
-            // Right (x+): side texture (mirrored)
-            sf::Texture::bind(&sideTex);
-            glBegin(GL_QUADS);
-                glTexCoord2f(1,0); glVertex3f(1,-1,-1);
-                glTexCoord2f(1,1); glVertex3f(1, 1,-1);
-                glTexCoord2f(0,1); glVertex3f(1, 1, 1);
-                glTexCoord2f(0,0); glVertex3f(1,-1, 1);
-            glEnd();
-
-            // Top (y+): top texture
-            sf::Texture::bind(&topTex);
-            glBegin(GL_QUADS);
-                glTexCoord2f(0,1); glVertex3f(-1,1,-1);
-                glTexCoord2f(0,0); glVertex3f(-1,1, 1);
-                glTexCoord2f(1,0); glVertex3f( 1,1, 1);
-                glTexCoord2f(1,1); glVertex3f( 1,1,-1);
-            glEnd();
-
-            // Bottom (y-): dirt texture
-            sf::Texture::bind(&dirtTex);
-            glBegin(GL_QUADS);
-                glTexCoord2f(0,1); glVertex3f(-1,-1,-1);
-                glTexCoord2f(1,1); glVertex3f( 1,-1,-1);
-                glTexCoord2f(1,0); glVertex3f( 1,-1, 1);
-                glTexCoord2f(0,0); glVertex3f(-1,-1, 1);
-            glEnd();
-
-            // Unbind texture
-            sf::Texture::bind(nullptr);
+            // Draw numeric FPS and mode using built-in bitmap font
+            std::string fpsstr = std::to_string(static_cast<int>(fps));
+            drawBitmapText(fpsstr, 8, 8, 2);
+            std::string m2 = modeStr + (sprintStr.empty() ? std::string() : " ") + sprintStr;
+            drawBitmapText(m2, 8, 22, 2);
+            if (showSpeed){
+                std::string s2 = "spd:" + std::to_string(static_cast<int>(roundf(flySpeed)));
+                drawBitmapText(s2, 8, 36, 2);
+            }
+            // invert status
+            std::string invs = std::string("invert:") + (invertMouse ? "ON" : "OFF");
+            drawBitmapText(invs, 8, 50, 2);
         }
+        window.popGLStates();
 
         window.display();
     }

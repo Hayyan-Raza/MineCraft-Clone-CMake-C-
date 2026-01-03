@@ -1,0 +1,3 @@
+D:\Mysys2\mingw64\bin\cmake.exe -E rm -f CMakeFiles\pong.dir/objects.a
+D:\Mysys2\mingw64\bin\ar.exe qc CMakeFiles\pong.dir/objects.a @CMakeFiles\pong.dir\objects1.rsp
+D:\Mysys2\mingw64\bin\c++.exe -O3 -DNDEBUG -Wl,--whole-archive CMakeFiles\pong.dir/objects.a -Wl,--no-whole-archive -o pong.exe -Wl,--out-implib,libpong.dll.a -Wl,--major-image-version,0,--minor-image-version,0 @CMakeFiles\pong.dir\linkLibs.rsp

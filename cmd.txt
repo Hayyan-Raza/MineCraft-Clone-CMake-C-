@@ -1,0 +1,7 @@
+Command to Compile :
+
+
+D:\Mysys2\usr\bin\bash.exe -lc "export PATH=/mingw64/bin:$PATH; cd '/c/Users/Hayyan/Desktop/C++ Game/sfml-pong'; cmake --build build --config Release --target cube -j 4"
+
+
+

@@ -19,7 +19,7 @@ add_custom_command(TARGET pong POST_BUILD
 )
 
 # Small OpenGL cube demo
-add_executable(cube src/cube.cpp)
+add_executable(cube src/cube.cpp src/texture_atlas.cpp src/world.cpp src/rendering.cpp)
 
 target_link_libraries(cube PRIVATE SFML::Graphics SFML::Window SFML::System OpenGL::GL)
 
