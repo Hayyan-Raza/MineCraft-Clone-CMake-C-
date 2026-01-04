@@ -664,39 +664,52 @@ if (hudFont.openFromFile("assets/arial.ttf") || hudFont.openFromFile("C:/Windows
         glPushMatrix();
             const int half = CHUNK/2;
 
+            if (terrainDirty || terrainDL == 0) {
+                if (terrainDL == 0) terrainDL = glGenLists(1);
+                glNewList(terrainDL, GL_COMPILE);
+                
+                // If atlas is loaded, bind it ONCE here to optimize (though drawBlockAt rebinds, 
+                // but at least we can try to minimize if we refactored, but DL handles this anyway)
+                // Actually, since drawBlockAt binds texture, we can't easily optimize the bind 
+                // without changing drawBlockAt. But DL should record the binds.
+                // NOTE: If we wanted to really optimize, we'd batch geometry by texture.
+                // But DL is good enough for this.
+                
+                for(int xi=0; xi<CHUNK; ++xi){
+                    for(int zi=0; zi<CHUNK; ++zi){
+                        int h = getHeightAt(xi, zi);
+                        for(int yi=0; yi<h; ++yi){
+                            // Determine block type based on depth
+                            // Top level: Grass (index 1)
+                            // Next 3 levels: Dirt (index 0)
+                            // Deeper: Stone (index 2) - check if Stone exists
+                            const Block* bPtr = &blocks[0];
+                            if (yi == h-1) bPtr = &blocks[1];
+                            else if (yi >= h-4) bPtr = &blocks[0];
+                            else if (blocks.size() > 2) bPtr = &blocks[2];
+                            
+                            const Block &b = *bPtr;
+                            float gx = static_cast<float>(xi - half);
+                            float gz = static_cast<float>(zi - half);
+                            float gy = static_cast<float>(yi);
 
+                            int mask = 0;
+                            if (yi == h-1) mask |= FACE_TOP;
+                            if (yi == 0) mask |= FACE_BOTTOM;
+                            if (isAirAt(xi, zi+1, yi)) mask |= FACE_FRONT;
+                            if (isAirAt(xi, zi-1, yi)) mask |= FACE_BACK;
+                            if (isAirAt(xi+1, zi, yi)) mask |= FACE_RIGHT;
+                            if (isAirAt(xi-1, zi, yi)) mask |= FACE_LEFT;
 
-            for(int xi=0; xi<CHUNK; ++xi){
-                for(int zi=0; zi<CHUNK; ++zi){
-                    int h = getHeightAt(xi, zi);
-                    for(int yi=0; yi<h; ++yi){
-                        // Determine block type based on depth
-                        // Top level: Grass (index 1)
-                        // Next 3 levels: Dirt (index 0)
-                        // Deeper: Stone (index 2) - check if Stone exists
-                        const Block* bPtr = &blocks[0];
-                        if (yi == h-1) bPtr = &blocks[1];
-                        else if (yi >= h-4) bPtr = &blocks[0];
-                        else if (blocks.size() > 2) bPtr = &blocks[2];
-                        
-                        const Block &b = *bPtr;
-                        float gx = static_cast<float>(xi - half);
-                        float gz = static_cast<float>(zi - half);
-                        float gy = static_cast<float>(yi);
-
-                        int mask = 0;
-                        if (yi == h-1) mask |= FACE_TOP;
-                        if (yi == 0) mask |= FACE_BOTTOM;
-                        if (isAirAt(xi, zi+1, yi)) mask |= FACE_FRONT;
-                        if (isAirAt(xi, zi-1, yi)) mask |= FACE_BACK;
-                        if (isAirAt(xi+1, zi, yi)) mask |= FACE_RIGHT;
-                        if (isAirAt(xi-1, zi, yi)) mask |= FACE_LEFT;
-
-                        if (mask == 0) continue; // block fully surrounded
-                        drawBlockAt(gx, gy, gz, b, mask, atlas);
+                            if (mask == 0) continue; // block fully surrounded
+                            drawBlockAt(gx, gy, gz, b, mask, atlas);
+                        }
                     }
                 }
+                glEndList();
+                terrainDirty = false;
             }
+            glCallList(terrainDL);
         glPopMatrix();
 
         // Draw HUD overlay

@@ -21,5 +21,18 @@ C:\Users\Hayyan\Desktop\C++ Game\sfml-pong\src\cube.cpp:175:66: warning: ignorin
 D:/Mysys2/mingw64/include/SFML/Graphics/Texture.hpp:380:24: note: declared here
   380 |     [[nodiscard]] bool loadFromImage(const Image& image, bool sRgb = false, const IntRect& area = {});
       |                        ^~~~~~~~~~~~~
-[ 40%] Linking CXX executable cube.exe
-[100%] Built target cube
+C:\Users\Hayyan\Desktop\C++ Game\sfml-pong\src\cube.cpp:667:17: error: 'terrainDirty' was not declared in this scope
+  667 |             if (terrainDirty || terrainDL == 0) {
+      |                 ^~~~~~~~~~~~
+C:\Users\Hayyan\Desktop\C++ Game\sfml-pong\src\cube.cpp:667:33: error: 'terrainDL' was not declared in this scope; did you mean 'terrainSeed'?
+  667 |             if (terrainDirty || terrainDL == 0) {
+      |                                 ^~~~~~~~~
+      |                                 terrainSeed
+C:\Users\Hayyan\Desktop\C++ Game\sfml-pong\src\cube.cpp:712:24: error: 'terrainDL' was not declared in this scope; did you mean 'terrainSeed'?
+  712 |             glCallList(terrainDL);
+      |                        ^~~~~~~~~
+      |                        terrainSeed
+mingw32-make[3]: *** [CMakeFiles\cube.dir\build.make:78: CMakeFiles/cube.dir/src/cube.cpp.obj] Error 1
+mingw32-make[2]: *** [CMakeFiles\Makefile2:121: CMakeFiles/cube.dir/all] Error 2
+mingw32-make[1]: *** [CMakeFiles\Makefile2:128: CMakeFiles/cube.dir/rule] Error 2
+mingw32-make: *** [Makefile:136: cube] Error 2
